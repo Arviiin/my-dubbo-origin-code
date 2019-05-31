@@ -26,7 +26,8 @@ import com.alibaba.dubbo.common.extension.SPI;
  */
 public class SpiExtensionFactory implements ExtensionFactory {
 
-    public <T> T getExtension(Class<T> type, String name) {
+    public <T> T getExtension(Class<T> type, String name) {// Protocol 是一个接口类，同时标注了 @SPI 注解，此时会获取 Protocol 类型的 ExtensionLoader 对象，
+        // 最后又去调用 loader 的 getAdaptiveExtension() 方法。最终获取到的自适应类为 Protocol$Adaptive 动态类。
         if (type.isInterface() && type.isAnnotationPresent(SPI.class)) {
             ExtensionLoader<T> loader = ExtensionLoader.getExtensionLoader(type);
             if (loader.getSupportedExtensions().size() > 0) {

@@ -31,7 +31,9 @@ import java.util.List;
 @Adaptive
 public class AdaptiveExtensionFactory implements ExtensionFactory {
 
-    private final List<ExtensionFactory> factories;
+    private final List<ExtensionFactory> factories;//factories 在 AdaptiveExtensionFactory 的构造方法中被初始化，
+    // 包含了两个工厂类：SpiExtensionFactory、SpringExtensionFactory。
+    //dubbo在设计的时候设计了这两种方式,但是截止2.5.4版本,SpringExtensionFactory的方式尚未发现使用,可能像Java的保留字一样,给以后埋下伏笔.
 
     public AdaptiveExtensionFactory() {
         ExtensionLoader<ExtensionFactory> loader = ExtensionLoader.getExtensionLoader(ExtensionFactory.class);
@@ -42,7 +44,9 @@ public class AdaptiveExtensionFactory implements ExtensionFactory {
         factories = Collections.unmodifiableList(list);
     }
 
-    public <T> T getExtension(Class<T> type, String name) {
+    public <T> T getExtension(Class<T> type, String name) {//会依次调用 SpiExtensionFactory 和 SpringExtensionFactory 类的 getExtension() 方法。
+        //factories=[SpiExtensionFactory,SpringExtensionFactory]
+        //遍历获取spi,先从SpiExtensionFactory获取,如果没有,再从SpringExtensionFactory获取
         for (ExtensionFactory factory : factories) {
             T extension = factory.getExtension(type, name);
             if (extension != null) {

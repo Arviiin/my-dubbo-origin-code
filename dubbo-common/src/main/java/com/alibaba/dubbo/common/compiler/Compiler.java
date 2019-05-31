@@ -34,5 +34,14 @@ public interface Compiler {
      * @return Compiled class
      */
     Class<?> compile(String code, ClassLoader classLoader);
+    //我们从AdaptiveCompiler中的compile和com.alibaba.dubbo.common.compiler.Compiler配置文件就不难分析出两点
+    //1.JDK的spi要用for循环,然后if判断才能获取到指定的spi对象,dubbo用指定的key就可以获取
+        //返回指定名字的扩展    public T getExtension(String name){}
+    //2.JDK的spi不支持默认值,dubbo增加了默认值的设计
+        //@SPI("javassist")代表默认的spi对象,比如Compiler默认使用的是javassist,可通过
+        //ExtensionLoader<Compiler> loader = ExtensionLoader.getExtensionLoader(Compiler.class);
+        //compiler = loader.getDefaultExtension();
+        //方式获取实现类,根据配置,即为
+        //com.alibaba.dubbo.common.compiler.support.JavassistCompiler
 
 }

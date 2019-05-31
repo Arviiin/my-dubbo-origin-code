@@ -43,6 +43,7 @@ public class SpringExtensionFactory implements ExtensionFactory {
     public <T> T getExtension(Class<T> type, String name) {
         for (ApplicationContext context : contexts) {
             if (context.containsBean(name)) {
+                //从容器中获取注入的对象
                 Object bean = context.getBean(name);
                 if (type.isInstance(bean)) {
                     return (T) bean;

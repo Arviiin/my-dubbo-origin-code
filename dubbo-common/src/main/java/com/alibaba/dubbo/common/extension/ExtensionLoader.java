@@ -58,6 +58,19 @@ import java.util.regex.Pattern;
  * @see com.alibaba.dubbo.common.extension.Activate
  */
 public class ExtensionLoader<T> {
+    //关于 Dubbo SPI 基于 JAVA SPI 改进
+//    Dubbo 的扩展点加载从 JDK 标准的 SPI (Service Provider Interface) 扩展点发现机制加强而来。
+//    JDK 标准的 SPI 会一次性实例化扩展点所有实现，如果有扩展实现初始化很耗时，但如果没用上也加载，会很浪费资源。
+//    如果扩展点加载失败，连扩展点的名称都拿不到了。比如：JDK 标准的 ScriptEngine，通过 getName() 获取脚本类型的名称，
+// 但如果 RubyScriptEngine 因为所依赖的 jruby.jar 不存在，导致 RubyScriptEngine 类加载失败，这个失败原因被吃掉了，和 ruby 对应不起来，
+// 当用户执行 ruby 脚本时，会报不支持 ruby，而不是真正失败的原因。增加了对扩展点 IoC 和 AOP 的支持，一个扩展点可以直接 setter 注入其它扩展点。
+// 建议初学者学习AOP的路线大致如下:
+// 装饰者设计模式->静态代理->JDK、cglib、Javassist优缺点对比->AOP源码
+
+    //总结如下：
+//    Dubbo SPI 在加载扩展点，会以 key-value 的形式将扩展类保存在缓存中，但此时的扩展类只是调用 Class.forName() 加载的类，并没有实例化。扩展类会在调用 getExtension() 方法时被实例化。
+//    Dubbo 通过工厂模式和反射机制实现了依赖注入功能。
+//    Dubbo 中通过包装类实现了 AOP 机制，方便我们添加监控和打印日志。
 
     private static final Logger logger = LoggerFactory.getLogger(ExtensionLoader.class);
 
@@ -327,6 +340,7 @@ public class ExtensionLoader<T> {
         return (T) instance;
     }
 
+
     /**
      * 返回缺省的扩展，如果没有设置则返回<code>null</code>。
      */
@@ -498,7 +512,12 @@ public class ExtensionLoader<T> {
 
     @SuppressWarnings("unchecked")
     private T createExtension(String name) {
-        Class<?> clazz = getExtensionClasses().get(name);
+        Class<?> clazz = getExtensionClasses().get(name);//getExtensionClasses() 方法在前文已经分析过了，但是需要注意的是：
+        // getExtensionClasses 返回给我们的不过是使用 Class.forName() 加载过的类而已，充其量执行了里面的静态代码段，而并非得到了真正的实例。
+        // 真正的实例对象仍需要调用 class.newInstance() 方法才能获取。
+        // 了解了这些之后我们继续看，我们通过 getExtensionClasses() 尝试获取系统已经加载的 class 对象，通过 class 对象再去扩展实例缓存中取。
+        // 如果扩展实例为 null，调用 newInstance() 方法初始化实例，并放到 EXTENSION_INSTANCES 缓存中。
+        // 之后再调用 injectExtension() 方法进行依赖注入。最后一段涉及到包装类的用法，
         if (clazz == null) {
             throw findException(name);
         }
@@ -509,7 +528,7 @@ public class ExtensionLoader<T> {
                 instance = (T) EXTENSION_INSTANCES.get(clazz);
             }
             injectExtension(instance);
-            Set<Class<?>> wrapperClasses = cachedWrapperClasses;
+            Set<Class<?>> wrapperClasses = cachedWrapperClasses;//还记得 wrapperClasses 在什么地方被初始化的吗？在前文中的 loadFile() 方法中我们已经有介绍过。在加载扩展点时，我们将对应 type 的包装类缓存起来
             if (wrapperClasses != null && wrapperClasses.size() > 0) {
                 for (Class<?> wrapperClass : wrapperClasses) {
                     instance = injectExtension((T) wrapperClass.getConstructor(type).newInstance(instance));
@@ -520,10 +539,32 @@ public class ExtensionLoader<T> {
             throw new IllegalStateException("Extension instance(name: " + name + ", class: " +
                     type + ")  could not be instantiated: " + t.getMessage(), t);
         }
+
+        // 为了更好的理解这段代码，我们假设当前 type 值为 Protocol.class ，
+        // 我们可以在 org.apache.dubbo.rpc.Protocol 文件中找到 Protocol 接口的包装类 ProtocolFilterWrapper 和 ProtocolListenerWrapper，
+        // 他们会依次被添加到 cachedWrapperClasses 集合中。依次遍历 cachedWrapperClasses 集合，比如第一次取到的是 ProtocolFilterWrapper 类，
+        // 则会以调用 ProtocolFilterWrapper 的复制构造方法将 instance 包装起来。创建完 ProtocolFilterWrapper 对象实例后，
+        // 调用 injectExtension() 进行依赖注入。此时 instance 已经为 ProtocolFilterWrapper 的实例，继续循环，
+        // 会将 ProtocolFilterWrapper 类包装在 ProtocolListenerWrapper 类中。因此我们最后返回的是一个 ProtocolListenerWrapper 实例。
+        // 最后调用时，仍会通过一层一层的调用，最后调用原始 instance 的方法。
+        // 这里的包装类有点类似 AOP 思想，我们可以通过一层一层的包装，在调用扩展实现之前添加一些日志打印、监控等自定义的操作。
+
     }
 
-    //遍历当前实例的 set 方法，以 set 方法第四位开始至末尾的字符串为关键字，尝试通过 objectFactory 来获取对应的 扩展类实现。
+    // 遍历当前实例的 set 方法，以 set 方法第四位开始至末尾的字符串为关键字，尝试通过 objectFactory 来获取对应的 扩展类实现。
     // 如果存在对应扩展类，通过反射注入到当前实例中。这个方法相当于完成了一个简单的依赖注入功能，我们常说 Dubbo 中的 IOC 实际上也是在这里体现的。
+
+    //我们举个例子说明一下。instance = injectExtension((T) wrapperClass.getConstructor(type).newInstance(instance));
+    // 比如我们当前的 wrapperClass 类为 StubProxyFactoryWrapper，那么代码执行逻辑大致如下所示：
+    /*
+    创建 StubProxyFactoryWrapper 实例；
+    获取上述实例作为 injectExtension() 的参数，执行；
+    injectExtension() 方法循环遍历到 StubProxyFactoryWrapper 的 setProtocol()方法（此时 pt=Protocol.class，property=protocol），执行 objectFactory.getExtension(pt,property) 方法。objectFactory 在 ExtensionLoader 的构造方法中被初始化，在这里获取到自适应扩展类为 AdaptiveExtensionFactory。
+    执行 AdaptiveExtensionFactory.getExtension()。AdaptiveExtensionFactory 类中有一个集合变量 factories。factories 在 AdaptiveExtensionFactory 的构造方法中被初始化，包含了两个工厂类：SpiExtensionFactory、SpringExtensionFactory。执行 AdaptiveExtensionFactory 类的 getExtension() 方法会依次调用 SpiExtensionFactory 和 SpringExtensionFactory 类的 getExtension() 方法。
+    执行 SpiExtensionFactory 的 getExtension() 方法。上面有说到此时的 type=Procotol.class,property=protocol，从下面的代码我们可以发现 Protocol 是一个接口类，同时标注了 @SPI 注解，此时会获取 Protocol 类型的 ExtensionLoader 对象，最后又去调用 loader 的 getAdaptiveExtension() 方法。最终获取到的自适应类为 Protocol$Adaptive 动态类。
+    objectFactory.getExtension(pt, property); 最后得到的类为 Protocol$Adaptive 类，最后利用反射机制将其注入到 StubProxyFactoryWrapper 实例中。
+    */
+
     private T injectExtension(T instance) {
         try {
             if (objectFactory != null) {
@@ -534,7 +575,7 @@ public class ExtensionLoader<T> {
                         Class<?> pt = method.getParameterTypes()[0];
                         try {
                             String property = method.getName().length() > 3 ? method.getName().substring(3, 4).toLowerCase() + method.getName().substring(4) : "";
-                            Object object = objectFactory.getExtension(pt, property);
+                            Object object = objectFactory.getExtension(pt, property);//objectFactory 在 ExtensionLoader 的构造方法中被初始化，在这里获取到自适应扩展类为 AdaptiveExtensionFactory。
                             if (object != null) {
                                 method.invoke(instance, object);
                             }
@@ -658,8 +699,8 @@ public class ExtensionLoader<T> {
                                                 }
                                             } else {
                                                 try {
-                                                    clazz.getConstructor(type);
-                                                    Set<Class<?>> wrappers = cachedWrapperClasses;
+                                                    clazz.getConstructor(type);//这个方法比较简单，尝试获取 clazz 中以 type 为参数的构造方法，如果可以获取到，则认为 clazz 则是当前 type 类的包装类。
+                                                    Set<Class<?>> wrappers = cachedWrapperClasses;// A 类有一个以 A 为参数的构造方法，我们称它为复制构造方法。有这样构造方法的类在 Dubbo 中我们称它为 Wrapper 类。
                                                     if (wrappers == null) {
                                                         cachedWrapperClasses = new ConcurrentHashSet<Class<?>>();
                                                         wrappers = cachedWrapperClasses;
